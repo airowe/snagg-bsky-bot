@@ -1,29 +1,55 @@
-import type { AppBskyEmbedExternal, AppBskyEmbedImage } from "@atproto/api";
+import { snaggConfig } from "./config.js";
+
+interface SnaggMeme {
+  id: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  image_url: string;
+  thumbnail_url: string;
+  image_width: number | null;
+  image_height: number | null;
+  categories: string[];
+  tags: string[];
+  is_nsfw: boolean;
+  source_url: string | null;
+  // New fields for enhanced API response
+  alt_text?: string;
+  watermarked_image_url?: string;
+}
 
 interface SnaggRandomResponse {
-  url: string;
-  source: string;
-  nsfw: boolean;
-  image?: {
-    url: string;
-    width: number;
-    height: number;
+  data: {
+    memes: SnaggMeme[];
   };
+  error: string | null;
 }
 
-export interface PostRecord {
+export interface PostData {
   text: string;
-  embed?: AppBskyEmbedImage.Main | AppBskyEmbedExternal.Main;
-  createdAt?: Date;
-  facets?: Array<any>;
+  imageUrl?: string;
+  imageAlt?: string;
+  externalUrl?: string;
+  externalTitle?: string;
+  externalDescription?: string;
 }
 
-export default async function getPostText(): Promise<
-  string | PostRecord
-> {
+export default async function getPostText(): Promise<PostData> {
   try {
+    // Build request headers
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+    };
+
+    // Add API key if configured
+    if (snaggConfig.apiKey) {
+      headers["X-API-Key"] = snaggConfig.apiKey;
+    }
+
     // Fetch random meme from snagg API
-    const response = await fetch("https://api.snagg.meme/api/v1/random");
+    const response = await fetch(`${snaggConfig.apiUrl}/random`, {
+      headers,
+    });
 
     if (!response.ok) {
       throw new Error(
@@ -31,55 +57,36 @@ export default async function getPostText(): Promise<
       );
     }
 
-    const data: SnaggRandomResponse = await response.json();
+    const result: SnaggRandomResponse = await response.json();
 
-    // If we have an image, download it and create an image embed
-    if (data.image?.url) {
-      const imageUrl = data.image.url.startsWith("http")
-        ? data.image.url
-        : `https://snagg.meme${data.image.url.startsWith("/") ? "" : "/"}${data.image.url}`;
-
-      const imageResponse = await fetch(imageUrl);
-      if (!imageResponse.ok) {
-        throw new Error(`Failed to fetch image: ${imageResponse.statusText}`);
-      }
-
-      const imageBuffer = await imageResponse.arrayBuffer();
-      const imageBytes = new Uint8Array(imageBuffer);
-
-      return {
-        text: "Check out this meme from snagg.meme! 🎉",
-        embed: {
-          $type: "app.bsky.embed.image",
-          images: [
-            {
-              image: new Blob([imageBytes], { type: "image/jpeg" }),
-              alt: "Meme from snagg.meme",
-            },
-          ],
-        } as any,
-      };
+    if (result.error) {
+      throw new Error(`Snagg API error: ${result.error}`);
     }
 
-    // If no image, return URL with external link card
-    const memeUrl = data.url.startsWith("http")
-      ? data.url
-      : `https://snagg.meme${data.url.startsWith("/") ? "" : "/"}${data.url}`;
+    const meme = result.data.memes[0];
+    if (!meme) {
+      throw new Error("No memes returned from API");
+    }
+
+    // Build the meme page URL for the link
+    const memePageUrl = `https://snagg.meme/meme/${meme.slug}`;
+
+    // Prefer watermarked image URL if available, otherwise use original
+    const imageUrl = meme.watermarked_image_url || meme.image_url;
+
+    // Use API-provided alt_text if available, otherwise fall back to description/title
+    const imageAlt =
+      meme.alt_text || meme.description || meme.title || "Meme from snagg.meme";
 
     return {
-      text: "Check out this meme from snagg.meme! 🎉",
-      embed: {
-        $type: "app.bsky.embed.external",
-        external: {
-          uri: memeUrl,
-          title: "snagg.meme",
-          description: "A collection of great memes",
-        },
-      } as any,
+      text: meme.title || "Check out this meme from snagg.meme!",
+      imageUrl,
+      imageAlt,
+      externalUrl: memePageUrl,
     };
   } catch (error) {
     console.error("Error fetching meme:", error);
     // Fallback post if fetching fails
-    return "Check out snagg.meme for some great memes! 🎉";
+    return { text: "Check out snagg.meme for some great memes!" };
   }
 }
