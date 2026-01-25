@@ -1,92 +1,78 @@
 import { snaggConfig } from "./config.js";
 
-interface SnaggMeme {
-  id: string;
-  title: string;
-  slug: string;
-  description: string | null;
-  image_url: string;
-  thumbnail_url: string;
-  image_width: number | null;
-  image_height: number | null;
-  categories: string[];
-  tags: string[];
-  is_nsfw: boolean;
-  source_url: string | null;
-  // New fields for enhanced API response
-  alt_text?: string;
-  watermarked_image_url?: string;
-}
-
-interface SnaggRandomResponse {
-  data: {
-    memes: SnaggMeme[];
-  };
-  error: string | null;
-}
-
 export interface PostData {
   text: string;
-  imageUrl?: string;
+  imageBuffer?: ArrayBuffer;
   imageAlt?: string;
-  externalUrl?: string;
-  externalTitle?: string;
-  externalDescription?: string;
 }
 
+/**
+ * Fetches an AI-generated meme from the Snagg API.
+ * The /memes/generate/image endpoint:
+ * 1. Picks a random meme template
+ * 2. Generates a caption using AI based on trending Bluesky topics
+ * 3. Renders the text onto the image server-side
+ * 4. Returns the final PNG with text baked in
+ */
 export default async function getPostText(): Promise<PostData> {
   try {
-    // Build request headers
-    const headers: HeadersInit = {
-      "Content-Type": "application/json",
-    };
+    const headers: HeadersInit = {};
 
-    // Add API key if configured
     if (snaggConfig.apiKey) {
       headers["X-API-Key"] = snaggConfig.apiKey;
     }
 
-    // Fetch random meme from snagg API
-    const response = await fetch(`${snaggConfig.apiUrl}/random`, {
+    console.log("[getPostText] Fetching AI-generated meme...");
+
+    const response = await fetch(`${snaggConfig.apiUrl}/memes/generate/image`, {
+      method: "POST",
       headers,
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
       throw new Error(
-        `Failed to fetch from snagg API: ${response.status} ${response.statusText}`
+        `Failed to generate meme: ${response.status} ${response.statusText} - ${errorText}`
       );
     }
 
-    const result: SnaggRandomResponse = await response.json();
+    // The response body IS the image (PNG)
+    const imageBuffer = await response.arrayBuffer();
 
-    if (result.error) {
-      throw new Error(`Snagg API error: ${result.error}`);
+    // Caption text is in response headers
+    const topText = response.headers.get("X-Meme-Top-Text") || "";
+    const bottomText = response.headers.get("X-Meme-Bottom-Text") || "";
+    const templateName = response.headers.get("X-Meme-Template") || "";
+
+    console.log(
+      `[getPostText] Generated meme - Template: ${templateName}, Top: "${topText}", Bottom: "${bottomText}"`
+    );
+
+    // Build post text from the caption
+    let postText = "";
+    if (topText && bottomText) {
+      postText = `${topText} / ${bottomText}`;
+    } else if (topText || bottomText) {
+      postText = topText || bottomText;
+    } else {
+      postText = "Fresh meme from snagg.meme 🔥";
     }
 
-    const meme = result.data.memes[0];
-    if (!meme) {
-      throw new Error("No memes returned from API");
-    }
-
-    // Build the meme page URL for the link
-    const memePageUrl = `https://snagg.meme/meme/${meme.slug}`;
-
-    // Prefer watermarked image URL if available, otherwise use original
-    const imageUrl = meme.watermarked_image_url || meme.image_url;
-
-    // Use API-provided alt_text if available, otherwise fall back to description/title
-    const imageAlt =
-      meme.alt_text || meme.description || meme.title || "Meme from snagg.meme";
+    // Build alt text for accessibility
+    const altParts = ["Meme"];
+    if (templateName) altParts.push(`(${templateName})`);
+    if (topText) altParts.push(`Top text: "${topText}"`);
+    if (bottomText) altParts.push(`Bottom text: "${bottomText}"`);
+    const imageAlt = altParts.join(" - ");
 
     return {
-      text: meme.title || "Check out this meme from snagg.meme!",
-      imageUrl,
+      text: postText,
+      imageBuffer,
       imageAlt,
-      externalUrl: memePageUrl,
     };
   } catch (error) {
-    console.error("Error fetching meme:", error);
-    // Fallback post if fetching fails
-    return { text: "Check out snagg.meme for some great memes!" };
+    console.error("[getPostText] Error generating meme:", error);
+    // Fallback post if generation fails
+    return { text: "Check out snagg.meme for fresh memes! 🔥" };
   }
 }

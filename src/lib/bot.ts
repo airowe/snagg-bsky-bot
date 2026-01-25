@@ -35,16 +35,10 @@ export default class Bot {
       facets: richText.facets,
     };
 
-    // Handle image embed
-    if (postData.imageUrl) {
-      const imageResponse = await fetch(postData.imageUrl);
-      if (!imageResponse.ok) {
-        throw new Error(`Failed to fetch image: ${imageResponse.statusText}`);
-      }
-
-      const imageBuffer = await imageResponse.arrayBuffer();
-      const imageBlob = new Blob([imageBuffer], {
-        type: imageResponse.headers.get("content-type") || "image/jpeg",
+    // Handle image embed (from buffer - used by AI-generated memes)
+    if (postData.imageBuffer) {
+      const imageBlob = new Blob([postData.imageBuffer], {
+        type: "image/png",
       });
 
       const uploaded = await this.#agent.uploadBlob(imageBlob);
@@ -57,17 +51,6 @@ export default class Bot {
             alt: postData.imageAlt || "",
           },
         ],
-      };
-    }
-    // Handle external link card embed
-    else if (postData.externalUrl) {
-      record.embed = {
-        $type: "app.bsky.embed.external",
-        external: {
-          uri: postData.externalUrl,
-          title: postData.externalTitle || "",
-          description: postData.externalDescription || "",
-        },
       };
     }
 
