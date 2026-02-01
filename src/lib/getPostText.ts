@@ -39,10 +39,10 @@ export default async function getPostText(): Promise<PostData> {
     // The response body IS the image (PNG)
     const imageBuffer = await response.arrayBuffer();
 
-    // Caption text is in response headers
-    const topText = response.headers.get("X-Meme-Top-Text") || "";
-    const bottomText = response.headers.get("X-Meme-Bottom-Text") || "";
-    const templateName = response.headers.get("X-Meme-Template") || "";
+    // Caption text is in response headers (URL-encoded since HTTP headers are ASCII-only)
+    const topText = decodeURIComponent(response.headers.get("X-Meme-Top-Text") || "");
+    const bottomText = decodeURIComponent(response.headers.get("X-Meme-Bottom-Text") || "");
+    const templateName = decodeURIComponent(response.headers.get("X-Meme-Template") || "");
 
     console.log(
       `[getPostText] Generated meme - Template: ${templateName}, Top: "${topText}", Bottom: "${bottomText}"`
