@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Mock the config module before importing getPostText
 vi.mock("../lib/config.js", () => ({
   snaggConfig: {
     apiUrl: "https://snagg.meme/api/v1",
-    apiKey: undefined,
+    apiKey: "test-key",
   },
 }));
 
-import getPostText from "../lib/getPostText.js";
+import getPostText, { fetchRandomMeme } from "../lib/getPostText.js";
 
 describe("getPostText", () => {
   const mockFetch = vi.fn();
@@ -23,140 +22,83 @@ describe("getPostText", () => {
     vi.resetAllMocks();
   });
 
-  it("should fetch and parse a meme from the snagg API", async () => {
-    const mockMeme = {
-      id: "test-id",
-      title: "Test Meme Title",
-      slug: "test-meme-title",
-      description: "A funny test meme",
-      image_url: "https://example.com/meme.png",
-      thumbnail_url: "https://example.com/meme-thumb.png",
-      image_width: 500,
-      image_height: 500,
-      categories: ["programming"],
-      tags: ["test"],
-      is_nsfw: false,
-      source_url: null,
-    };
+  it("returns generated meme when generation succeeds", async () => {
+    const imageData = new ArrayBuffer(100);
+    const headers = new Map([
+      ["Content-Type", "image/webp"],
+      ["X-Meme-Top-Text", encodeURIComponent("WHEN THE CODE")],
+      ["X-Meme-Bottom-Text", encodeURIComponent("FINALLY COMPILES")],
+      ["X-Meme-Template", encodeURIComponent("Drake")],
+    ]);
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        data: { memes: [mockMeme] },
-        error: null,
-      }),
+      arrayBuffer: async () => imageData,
+      headers: { get: (key: string) => headers.get(key) || null },
     });
 
     const result = await getPostText();
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "https://snagg.meme/api/v1/random",
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          "Content-Type": "application/json",
-        }),
-      })
+      "https://snagg.meme/api/v1/memes/generate/image",
+      expect.objectContaining({ method: "POST" })
     );
-    expect(result).toEqual({
-      text: "Test Meme Title",
-      imageUrl: "https://example.com/meme.png",
-      imageAlt: "A funny test meme",
-      externalUrl: "https://snagg.meme/meme/test-meme-title",
-    });
+    expect(result.text).toBe("WHEN THE CODE / FINALLY COMPILES");
+    expect(result.imageBuffer).toBe(imageData);
+    expect(result.imageAlt).toContain("Drake");
+    expect(result.imageMimeType).toBe("image/webp");
   });
 
-  it("should prefer watermarked_image_url when available", async () => {
+  it("falls back to random meme when generation fails", async () => {
+    // First call: generate fails
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      text: async () => "Caption generation failed",
+    });
+
+    // Second call: random succeeds
     const mockMeme = {
-      id: "test-id",
-      title: "Watermarked Meme",
-      slug: "watermarked-meme",
-      description: null,
-      image_url: "https://example.com/original.png",
-      watermarked_image_url: "https://example.com/watermarked.png",
-      thumbnail_url: "https://example.com/thumb.png",
-      image_width: 500,
-      image_height: 500,
-      categories: [],
-      tags: [],
-      is_nsfw: false,
-      source_url: null,
+      title: "Distracted Boyfriend",
+      slug: "distracted-boyfriend",
+      image_url: "https://cdn.snagg.meme/meme.webp",
+      watermarked_image_url: "https://cdn.snagg.meme/watermarked.webp",
+      ai_alt_text: "A man looking at another woman",
+      tags: ["programming", "javascript", "typescript"],
     };
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        data: { memes: [mockMeme] },
-        error: null,
-      }),
+      json: async () => ({ data: { memes: [mockMeme] } }),
     });
 
-    const result = await getPostText();
-
-    expect(result.imageUrl).toBe("https://example.com/watermarked.png");
-  });
-
-  it("should prefer alt_text when available", async () => {
-    const mockMeme = {
-      id: "test-id",
-      title: "Meme With Alt Text",
-      slug: "meme-with-alt-text",
-      description: "Generic description",
-      alt_text: "A detailed accessibility description of the meme content",
-      image_url: "https://example.com/meme.png",
-      thumbnail_url: "https://example.com/thumb.png",
-      image_width: 500,
-      image_height: 500,
-      categories: [],
-      tags: [],
-      is_nsfw: false,
-      source_url: null,
-    };
-
+    // Third call: image download
+    const imageData = new ArrayBuffer(50);
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        data: { memes: [mockMeme] },
-        error: null,
-      }),
+      arrayBuffer: async () => imageData,
+      headers: { get: (key: string) => (key === "Content-Type" ? "image/webp" : null) },
     });
 
     const result = await getPostText();
 
-    expect(result.imageAlt).toBe(
-      "A detailed accessibility description of the meme content"
-    );
+    expect(result.text).toContain("Distracted Boyfriend");
+    expect(result.text).toContain("#programming");
+    expect(result.imageBuffer).toBe(imageData);
+    expect(result.imageAlt).toBe("A man looking at another woman");
   });
 
-  it("should use title as alt text when description is null", async () => {
-    const mockMeme = {
-      id: "test-id",
-      title: "Meme Without Description",
-      slug: "meme-without-description",
-      description: null,
-      image_url: "https://example.com/meme.png",
-      thumbnail_url: "https://example.com/meme-thumb.png",
-      image_width: 500,
-      image_height: 500,
-      categories: [],
-      tags: [],
-      is_nsfw: false,
-      source_url: null,
-    };
-
+  it("returns text-only fallback when both generation and random fail", async () => {
+    // Generate fails
     mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: { memes: [mockMeme] },
-        error: null,
-      }),
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      text: async () => "error",
     });
 
-    const result = await getPostText();
-
-    expect(result.imageAlt).toBe("Meme Without Description");
-  });
-
-  it("should return fallback text when API fails", async () => {
+    // Random also fails
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 500,
@@ -166,39 +108,169 @@ describe("getPostText", () => {
     const result = await getPostText();
 
     expect(result).toEqual({
-      text: "Check out snagg.meme for some great memes!",
+      text: "Check out snagg.meme for fresh memes! 🔥",
     });
   });
 
-  it("should return fallback text when API returns error", async () => {
+  it("handles top-text-only generated meme", async () => {
+    const imageData = new ArrayBuffer(100);
+    const headers = new Map([
+      ["Content-Type", "image/webp"],
+      ["X-Meme-Top-Text", encodeURIComponent("ONE DOES NOT SIMPLY")],
+      ["X-Meme-Bottom-Text", ""],
+      ["X-Meme-Template", encodeURIComponent("Boromir")],
+    ]);
+
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        data: { memes: [] },
-        error: "Something went wrong",
-      }),
+      arrayBuffer: async () => imageData,
+      headers: { get: (key: string) => headers.get(key) || null },
     });
 
     const result = await getPostText();
 
-    expect(result).toEqual({
-      text: "Check out snagg.meme for some great memes!",
-    });
+    expect(result.text).toBe("ONE DOES NOT SIMPLY");
+  });
+});
+
+describe("fetchRandomMeme", () => {
+  const mockFetch = vi.fn();
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = mockFetch;
   });
 
-  it("should return fallback text when no memes returned", async () => {
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.resetAllMocks();
+  });
+
+  it("fetches and returns a random meme with image", async () => {
+    const mockMeme = {
+      title: "Test Meme",
+      slug: "test-meme",
+      image_url: "https://cdn.snagg.meme/original.webp",
+      watermarked_image_url: "https://cdn.snagg.meme/watermarked.webp",
+      ai_alt_text: "A funny meme",
+      description: "Description",
+      tags: ["funny", "meme"],
+    };
+
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        data: { memes: [] },
-        error: null,
-      }),
+      json: async () => ({ data: { memes: [mockMeme] } }),
     });
 
-    const result = await getPostText();
-
-    expect(result).toEqual({
-      text: "Check out snagg.meme for some great memes!",
+    const imageData = new ArrayBuffer(200);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      arrayBuffer: async () => imageData,
+      headers: { get: (key: string) => (key === "Content-Type" ? "image/webp" : null) },
     });
+
+    const result = await fetchRandomMeme();
+
+    expect(result).not.toBeNull();
+    expect(result!.text).toContain("Test Meme");
+    expect(result!.text).toContain("#funny");
+    expect(result!.imageBuffer).toBe(imageData);
+    expect(result!.imageAlt).toBe("A funny meme");
+    expect(result!.imageMimeType).toBe("image/webp");
+    // Should fetch watermarked URL
+    expect(mockFetch).toHaveBeenCalledWith("https://cdn.snagg.meme/watermarked.webp");
+  });
+
+  it("uses image_url when watermarked_image_url is missing", async () => {
+    const mockMeme = {
+      title: "Test Meme",
+      slug: "test-meme",
+      image_url: "https://cdn.snagg.meme/original.webp",
+      ai_alt_text: null,
+      description: "A description",
+      tags: [],
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: { memes: [mockMeme] } }),
+    });
+
+    const imageData = new ArrayBuffer(200);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      arrayBuffer: async () => imageData,
+      headers: { get: () => null },
+    });
+
+    const result = await fetchRandomMeme();
+
+    expect(result).not.toBeNull();
+    expect(result!.imageAlt).toBe("A description");
+    expect(mockFetch).toHaveBeenCalledWith("https://cdn.snagg.meme/original.webp");
+  });
+
+  it("returns null when API returns empty memes", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: { memes: [] } }),
+    });
+
+    const result = await fetchRandomMeme();
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when API fails", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      statusText: "Too Many Requests",
+    });
+
+    const result = await fetchRandomMeme();
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when image download fails", async () => {
+    const mockMeme = {
+      title: "Test Meme",
+      slug: "test-meme",
+      image_url: "https://cdn.snagg.meme/original.webp",
+      tags: [],
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: { memes: [mockMeme] } }),
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    });
+
+    const result = await fetchRandomMeme();
+
+    expect(result).toBeNull();
+  });
+
+  it("includes API key in requests", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: { memes: [] } }),
+    });
+
+    await fetchRandomMeme();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://snagg.meme/api/v1/random?count=1",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "X-API-Key": "test-key",
+        }),
+      })
+    );
   });
 });

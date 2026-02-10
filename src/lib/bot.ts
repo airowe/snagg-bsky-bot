@@ -38,7 +38,7 @@ export default class Bot {
     // Handle image embed (from buffer - used by AI-generated memes)
     if (postData.imageBuffer) {
       const imageBlob = new Blob([postData.imageBuffer], {
-        type: "image/png",
+        type: postData.imageMimeType || "image/webp",
       });
 
       const uploaded = await this.#agent.uploadBlob(imageBlob);

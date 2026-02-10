@@ -4,20 +4,29 @@ export interface PostData {
   text: string;
   imageBuffer?: ArrayBuffer;
   imageAlt?: string;
+  imageMimeType?: string;
 }
 
 /**
  * Fetches an AI-generated meme from the Snagg API.
- * The /memes/generate/image endpoint:
- * 1. Picks a random meme template
- * 2. Generates a caption using AI based on trending Bluesky topics
- * 3. Renders the text onto the image server-side
- * 4. Returns the final PNG with text baked in
+ * Falls back to a random existing meme if generation fails.
  */
 export default async function getPostText(): Promise<PostData> {
+  const generated = await fetchGeneratedMeme();
+  if (generated) return generated;
+
+  console.log("[getPostText] Generation failed, falling back to random meme...");
+
+  const random = await fetchRandomMeme();
+  if (random) return random;
+
+  console.error("[getPostText] Both generation and random meme fetch failed");
+  return { text: "Check out snagg.meme for fresh memes! 🔥" };
+}
+
+async function fetchGeneratedMeme(): Promise<PostData | null> {
   try {
     const headers: HeadersInit = {};
-
     if (snaggConfig.apiKey) {
       headers["X-API-Key"] = snaggConfig.apiKey;
     }
@@ -31,15 +40,15 @@ export default async function getPostText(): Promise<PostData> {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Failed to generate meme: ${response.status} ${response.statusText} - ${errorText}`
+      console.error(
+        `[getPostText] Generate failed: ${response.status} ${response.statusText} - ${errorText}`
       );
+      return null;
     }
 
-    // The response body IS the image (PNG)
     const imageBuffer = await response.arrayBuffer();
+    const contentType = response.headers.get("Content-Type") || "image/webp";
 
-    // Caption text is in response headers (URL-encoded since HTTP headers are ASCII-only)
     const topText = decodeURIComponent(response.headers.get("X-Meme-Top-Text") || "");
     const bottomText = decodeURIComponent(response.headers.get("X-Meme-Bottom-Text") || "");
     const templateName = decodeURIComponent(response.headers.get("X-Meme-Template") || "");
@@ -48,7 +57,6 @@ export default async function getPostText(): Promise<PostData> {
       `[getPostText] Generated meme - Template: ${templateName}, Top: "${topText}", Bottom: "${bottomText}"`
     );
 
-    // Build post text from the caption
     let postText = "";
     if (topText && bottomText) {
       postText = `${topText} / ${bottomText}`;
@@ -58,21 +66,86 @@ export default async function getPostText(): Promise<PostData> {
       postText = "Fresh meme from snagg.meme 🔥";
     }
 
-    // Build alt text for accessibility
     const altParts = ["Meme"];
     if (templateName) altParts.push(`(${templateName})`);
     if (topText) altParts.push(`Top text: "${topText}"`);
     if (bottomText) altParts.push(`Bottom text: "${bottomText}"`);
-    const imageAlt = altParts.join(" - ");
 
     return {
       text: postText,
       imageBuffer,
-      imageAlt,
+      imageAlt: altParts.join(" - "),
+      imageMimeType: contentType,
     };
   } catch (error) {
     console.error("[getPostText] Error generating meme:", error);
-    // Fallback post if generation fails
-    return { text: "Check out snagg.meme for fresh memes! 🔥" };
+    return null;
+  }
+}
+
+export async function fetchRandomMeme(): Promise<PostData | null> {
+  try {
+    const headers: HeadersInit = { "Content-Type": "application/json" };
+    if (snaggConfig.apiKey) {
+      headers["X-API-Key"] = snaggConfig.apiKey;
+    }
+
+    console.log("[getPostText] Fetching random meme...");
+
+    const response = await fetch(`${snaggConfig.apiUrl}/random?count=1`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      console.error(
+        `[getPostText] Random fetch failed: ${response.status} ${response.statusText}`
+      );
+      return null;
+    }
+
+    const json = await response.json();
+    const memes = json?.data?.memes;
+
+    if (!memes || memes.length === 0) {
+      console.error("[getPostText] No memes returned from random endpoint");
+      return null;
+    }
+
+    const meme = memes[0];
+    const imageUrl = meme.watermarked_image_url || meme.image_url;
+
+    console.log(
+      `[getPostText] Random meme: "${meme.title}" (${imageUrl})`
+    );
+
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) {
+      console.error(
+        `[getPostText] Failed to download image: ${imageResponse.status}`
+      );
+      return null;
+    }
+
+    const imageBuffer = await imageResponse.arrayBuffer();
+    const contentType =
+      imageResponse.headers.get("Content-Type") || "image/webp";
+
+    const tags = (meme.tags as string[])?.slice(0, 3) || [];
+    const hashtags = tags.map((t: string) => `#${t.replace(/\s+/g, "")}`);
+
+    let postText = meme.title || "Fresh meme from snagg.meme";
+    if (hashtags.length > 0) {
+      postText += `\n\n${hashtags.join(" ")}`;
+    }
+
+    return {
+      text: postText,
+      imageBuffer,
+      imageAlt: meme.ai_alt_text || meme.description || meme.title,
+      imageMimeType: contentType,
+    };
+  } catch (error) {
+    console.error("[getPostText] Error fetching random meme:", error);
+    return null;
   }
 }
