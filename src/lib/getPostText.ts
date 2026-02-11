@@ -112,7 +112,7 @@ export async function fetchRandomMeme(): Promise<PostData | null> {
     }
 
     const meme = memes[0];
-    const imageUrl = meme.watermarked_image_url || meme.image_url;
+    const imageUrl = meme.image_url;
 
     console.log(
       `[getPostText] Random meme: "${meme.title}" (${imageUrl})`

@@ -177,8 +177,8 @@ describe("fetchRandomMeme", () => {
     expect(result!.imageBuffer).toBe(imageData);
     expect(result!.imageAlt).toBe("A funny meme");
     expect(result!.imageMimeType).toBe("image/webp");
-    // Should fetch watermarked URL
-    expect(mockFetch).toHaveBeenCalledWith("https://cdn.snagg.meme/watermarked.webp");
+    // Should fetch image URL directly (no watermark endpoint)
+    expect(mockFetch).toHaveBeenCalledWith("https://cdn.snagg.meme/original.webp");
   });
 
   it("uses image_url when watermarked_image_url is missing", async () => {
